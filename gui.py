@@ -218,11 +218,11 @@ class MacroEditorDialog(tk.Toplevel):
 
         hdr_row = tk.Frame(tg_fetch_frame, bg="#1a1f2e")
         hdr_row.pack(fill="x", padx=8, pady=(6, 2))
-        tk.Label(hdr_row, text="📥  Telegram Mesajından Medya Al",
+        tk.Label(hdr_row, text="Telegram Mesajindan Medya Al",
                  bg="#1a1f2e", fg="#60a5fa",
                  font=(FONT_FAMILY, 9, "bold")).pack(side="left")
         tk.Label(hdr_row,
-                 text="(mesaj linkini yapıştır → fotoğraf/video otomatik eklenir)",
+                 text="(mesaj linkini yapistir -> fotograf/video otomatik eklenir)",
                  bg="#1a1f2e", fg=COLORS["text_dim"],
                  font=(FONT_FAMILY, 8)).pack(side="left", padx=(6, 0))
 
@@ -253,7 +253,7 @@ class MacroEditorDialog(tk.Toplevel):
         tg_link_entry.bind("<FocusIn>", _ph_in)
         tg_link_entry.bind("<FocusOut>", _ph_out)
 
-        fetch_btn = tk.Button(link_row, text="📥 Getir",
+        fetch_btn = tk.Button(link_row, text="Getir",
                               font=(FONT_FAMILY, 9, "bold"), padx=10,
                               command=self._fetch_tg_media)
         fetch_btn.pack(side="right", padx=(6, 0))
@@ -264,6 +264,69 @@ class MacroEditorDialog(tk.Toplevel):
                                        bg="#1a1f2e", fg=COLORS["text_dim"],
                                        font=(FONT_FAMILY, 8), anchor="w")
         self._tg_status_lbl.pack(fill="x", padx=8, pady=(0, 6))
+
+        # ── Emoji Paketi Al ─────────────────────────────────────────────
+        ep_frame = tk.Frame(frame, bg="#1a1f2e", bd=0)
+        ep_frame.pack(fill="x", padx=padx, pady=(4, 0))
+
+        ep_hdr = tk.Frame(ep_frame, bg="#1a1f2e")
+        ep_hdr.pack(fill="x", padx=8, pady=(6, 2))
+        tk.Label(ep_hdr, text="Emoji Paketi Indir",
+                 bg="#1a1f2e", fg="#a78bfa",
+                 font=(FONT_FAMILY, 9, "bold")).pack(side="left")
+        tk.Label(ep_hdr,
+                 text="(t.me/addemoji/... linki veya kisaad)",
+                 bg="#1a1f2e", fg=COLORS["text_dim"],
+                 font=(FONT_FAMILY, 8)).pack(side="left", padx=(6, 0))
+
+        ep_input_row = tk.Frame(ep_frame, bg="#1a1f2e")
+        ep_input_row.pack(fill="x", padx=8, pady=(0, 3))
+
+        self._ep_var = tk.StringVar()
+        ep_entry = tk.Entry(ep_input_row, textvariable=self._ep_var,
+                            bg=COLORS["surface2"], fg=COLORS["text"],
+                            insertbackground=COLORS["text"], relief="flat",
+                            font=(FONT_FAMILY, 9),
+                            highlightthickness=1,
+                            highlightcolor="#7c3aed",
+                            highlightbackground=COLORS["border"])
+        ep_entry.pack(side="left", fill="x", expand=True, ipady=5)
+
+        ep_btn = tk.Button(ep_input_row, text="Paketi Getir",
+                           font=(FONT_FAMILY, 9, "bold"), padx=10,
+                           command=self._fetch_emoji_pack)
+        ep_btn.pack(side="right", padx=(6, 0))
+        style_button(ep_btn, "#7c3aed", "#6d28d9")
+
+        # Emoji listesi (kaydırılabilir)
+        ep_list_frame = tk.Frame(ep_frame, bg="#1a1f2e")
+        ep_list_frame.pack(fill="x", padx=8, pady=(0, 4))
+
+        ep_scroll = tk.Scrollbar(ep_list_frame, orient="vertical")
+        self._ep_listbox = tk.Listbox(
+            ep_list_frame,
+            bg=COLORS["surface2"], fg=COLORS["text"],
+            selectbackground="#7c3aed", selectforeground="white",
+            relief="flat", font=(FONT_FAMILY, 9),
+            height=4, selectmode="extended",
+            yscrollcommand=ep_scroll.set
+        )
+        ep_scroll.config(command=self._ep_listbox.yview)
+        ep_scroll.pack(side="right", fill="y")
+        self._ep_listbox.pack(side="left", fill="x", expand=True)
+
+        ep_add_btn = tk.Button(ep_frame, text="Secilenleri Makroya Ekle",
+                               font=(FONT_FAMILY, 9, "bold"),
+                               command=self._add_emoji_pack_to_text)
+        ep_add_btn.pack(padx=8, pady=(0, 6), anchor="w")
+        style_button(ep_add_btn, "#059669", "#047857")
+
+        self._ep_data = []   # [(char, doc_id), ...] — paketin tam listesi
+
+        self._ep_status = tk.StringVar()
+        tk.Label(ep_frame, textvariable=self._ep_status,
+                 bg="#1a1f2e", fg=COLORS["text_dim"],
+                 font=(FONT_FAMILY, 8), anchor="w").pack(fill="x", padx=8, pady=(0, 4))
 
         # Gönderme Modu
         label("Gönderme Modu")
@@ -534,45 +597,161 @@ class MacroEditorDialog(tk.Toplevel):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_media_fetched(self, result: dict):
-        """Medya indirme tamamlandığında çağrılır."""
-        files = result.get("files", [])
-        text  = result.get("text", "")
-        mtype = result.get("type", "none")
+        """Medya indirme tamamlandiginda cagirilir."""
+        files  = result.get("files", [])
+        text   = result.get("text", "")
+        mtype  = result.get("type", "none")
+        emojis = result.get("emojis", [])   # [(char, doc_id), ...]
 
-        if not files and not text:
-            self._set_fetch_status("⚠ Bu mesajda medya veya metin bulunamadı.", error=True)
+        if not files and not text and not emojis:
+            self._set_fetch_status("Bu mesajda medya, metin veya emoji bulunamadi.", error=True)
             return
 
-        # Görselleri listboxe ekle
+        # Gorselleri listboxe ekle
         for f in files:
             self.img_listbox.insert("end", f)
 
-        msg = ""
+        parts = []
+
+        # Dosya durum mesaji
         if files:
-            type_emoji = {"photo": "🖼", "video": "🎬", "sticker": "🎭",
-                          "document": "📄", "album": "🖼×n"}.get(mtype, "📎")
-            msg += f"✅ {type_emoji} {len(files)} dosya eklendi ({mtype})"
+            type_map = {"photo": "Fotograf", "video": "Video", "sticker": "Sticker",
+                        "document": "Dosya", "album": "Album"}
+            parts.append(f"{len(files)} {type_map.get(mtype, 'dosya')} eklendi")
 
-        # Metin varsa kullanıcıya sor
-        if text.strip():
-            msg += "  |  Mesaj metni de var."
-            if messagebox.askyesno(
-                "Metin Ekle?",
-                f"Mesajda şu metin de var:\n\n{text[:300]}{'...' if len(text)>300 else ''}\n\n"
-                "Metin kutusuna da eklensin mi?",
+        # Premium emoji ozeti
+        if emojis:
+            parts.append(f"{len(emojis)} premium emoji bulundu")
+
+        # Emoji sozdizimini olustur: [char](tg://emoji?id=doc_id)
+        emoji_syntax = ""
+        if emojis:
+            emoji_syntax = "".join(
+                f"[{char}](tg://emoji?id={doc_id})"
+                for char, doc_id in emojis
+            )
+
+        # Metin + emoji birlestirme stratejisi
+        # Eger hem metin hem emoji varsa: emojiler metin icerisinde zaten
+        # Sadece emoji varsa: sozdizimini ekle
+        final_text = None
+
+        if text.strip() and emojis:
+            # Mesaj metni + emoji sozdizimi iceriyor — tamamini al
+            preview = text[:200] + ("..." if len(text) > 200 else "")
+            ans = messagebox.askyesno(
+                "Metin ve Emoji Ekle?",
+                f"Mesajda metin ve {len(emojis)} premium emoji var:\n\n"
+                f"{preview}\n\n"
+                f"Emoji sözdizimiyle birlikte metin kutusuna eklensin mi?\n"
+                f"(Makro gönderiminde Telegram API modu seçili olmalı)",
                 parent=self
-            ):
-                self.text_widget.delete("1.0", "end")
-                self.text_widget.insert("1.0", text)
-                msg += "  +  Metin eklendi."
+            )
+            if ans:
+                # Ham metni olduğu gibi koy — API modunda entity'ler korunur
+                final_text = text
+                parts.append("Metin + emoji metin kutusuna eklendi")
 
-        self._set_fetch_status(msg, error=False)
+        elif text.strip():
+            # Sadece metin (emoji yok)
+            ans = messagebox.askyesno(
+                "Metin Ekle?",
+                f"Mesajda metin var:\n\n{text[:300]}{'...' if len(text)>300 else ''}\n\n"
+                "Metin kutusuna eklensin mi?",
+                parent=self
+            )
+            if ans:
+                final_text = text
+                parts.append("Metin eklendi")
+
+        elif emojis:
+            # Sadece emoji (metin yok)
+            ans = messagebox.askyesno(
+                "Emoji Ekle?",
+                f"{len(emojis)} premium emoji bulundu:\n\n"
+                f"{'  '.join(c for c, _ in emojis[:10])}{'...' if len(emojis)>10 else ''}\n\n"
+                f"Sözdizimleri metin kutusuna eklensin mi?\n{emoji_syntax[:200]}",
+                parent=self
+            )
+            if ans:
+                final_text = emoji_syntax
+                parts.append("Emoji sozdizimi eklendi")
+
+        if final_text is not None:
+            self.text_widget.delete("1.0", "end")
+            self.text_widget.insert("1.0", final_text)
+
+        self._set_fetch_status("  |  ".join(parts) if parts else "Islendi", error=False)
 
     def _set_fetch_status(self, msg: str, error: bool = False):
         self._tg_fetch_status.set(msg)
         self._tg_status_lbl.configure(
             fg=COLORS["danger"] if error else COLORS["success"]
         )
+
+    def _fetch_emoji_pack(self):
+        """Emoji paketini indirir ve listboxe doldurur."""
+        pack_input = self._ep_var.get().strip()
+        if not pack_input:
+            self._ep_status.set("Paket linki veya kisa ad girin.")
+            return
+
+        self._ep_status.set("Paket indiriliyor...")
+        self._ep_listbox.delete(0, "end")
+        self._ep_data = []
+
+        try:
+            import telethon_sender as tg_api
+        except ImportError:
+            self._ep_status.set("Telethon yuklu degil.")
+            return
+
+        def _worker():
+            try:
+                result = tg_api.get_emoji_pack(pack_input, timeout=30)
+                self.after(0, lambda: self._on_emoji_pack_fetched(result))
+            except Exception as e:
+                err = str(e)
+                self.after(0, lambda: self._ep_status.set(f"Hata: {err}"))
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_emoji_pack_fetched(self, result: dict):
+        """Emoji paketi indirme tamamlandığında."""
+        emojis = result.get("emojis", [])
+        title  = result.get("title", "Paket")
+        total  = result.get("total", len(emojis))
+
+        self._ep_data = emojis
+        self._ep_listbox.delete(0, "end")
+
+        for char, doc_id in emojis:
+            self._ep_listbox.insert("end", f"{char}  |  {doc_id}")
+
+        self._ep_status.set(
+            f"{title} — {len(emojis)} emoji yuklendi "
+            f"(Ctrl+A ile hepsini sec, sonra 'Makroya Ekle')"
+        )
+
+    def _add_emoji_pack_to_text(self):
+        """Listboxten secilen emojileri metin kutusuna ekler."""
+        sel = self._ep_listbox.curselection()
+        if not sel:
+            messagebox.showinfo("Secim Yok",
+                "Listeden emoji secin (Ctrl+A tumu seer).",
+                parent=self)
+            return
+
+        syntax = "".join(
+            f"[{self._ep_data[i][0]}](tg://emoji?id={self._ep_data[i][1]})"
+            for i in sel
+        )
+        # Mevcut metnin sonuna ekle
+        cur = self.text_widget.get("1.0", "end-1c")
+        self.text_widget.delete("1.0", "end")
+        self.text_widget.insert("1.0", cur + syntax)
+        self._ep_status.set(f"{len(sel)} emoji metin kutusuna eklendi.")
 
     def _capture_hotkey(self):
         """Bir sonraki basiilan hotkey'i yakalar."""
@@ -2448,7 +2627,7 @@ class UpdateCheckDialog(tk.Toplevel):
       4. Kurulum  — Bat script çalıştırılır, uygulama yeniden başlar
     """
 
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
 
     def __init__(self, parent):
         super().__init__(parent)
