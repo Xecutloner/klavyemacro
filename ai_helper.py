@@ -18,9 +18,14 @@ import tempfile
 import urllib.request
 import urllib.error
 
-_CONFIG_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "ai_config.json"
-)
+# Frozen (PyInstaller EXE) modda sys.executable'in klasorunu kullan,
+# boylece ai_config.json guncelleme sonrasi kaybolmaz.
+if getattr(sys, "frozen", False):
+    _BASE_DIR = os.path.dirname(sys.executable)
+else:
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+_CONFIG_FILE = os.path.join(_BASE_DIR, "ai_config.json")
 
 GEMINI_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/"

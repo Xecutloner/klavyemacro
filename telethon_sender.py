@@ -11,10 +11,20 @@ import json
 import win32gui
 from typing import Optional, Callable
 
+import sys
+
 # ---------------------------------------------------------------------------
 # Session & Config
 # ---------------------------------------------------------------------------
-BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller EXE'de __file__ geçici temp dizinine işaret eder.
+# Bunun yerine sys.executable'ın bulunduğu klasörü kullanıyoruz —
+# bu sayede tg_session ve tg_creds.json her zaman EXE'nin yanında kalır,
+# güncelleme sonrası silinmez.
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)   # dist/KlavyeMacro.exe klasörü
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # geliştirme modu
+
 SESSION    = os.path.join(BASE_DIR, "tg_session")
 CREDS_FILE = os.path.join(BASE_DIR, "tg_creds.json")
 
@@ -269,6 +279,71 @@ def get_emoji_ids_from_message(message_link: str, timeout: float = 30) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Emoji Paketi İndirici
+# ---------------------------------------------------------------------------
+async def _async_get_emoji_pack(pack_input: str) -> list:
+    """
+    Telegram emoji/sticker paketindeki tüm özel emoji'lerin (char, doc_id)
+    listesini döner.
+
+    pack_input örnekleri:
+      https://t.me/addemoji/PackShortName
+      https://t.me/addstickers/PackShortName
+      PackShortName   (direkt kısa ad)
+    """
+    from telethon.tl.functions.messages import GetStickerSetRequest
+    from telethon.tl.types import InputStickerSetShortName
+
+    client = get_client()
+    if not client.is_connected():
+        await client.connect()
+    if not await client.is_user_authorized():
+        raise RuntimeError("Telegram hesabina giris yapilmamis.")
+
+    # Link'ten kısa adı çıkar
+    short_name = pack_input.strip().rstrip("/")
+    for prefix in ("https://t.me/addemoji/", "https://t.me/addstickers/",
+                   "t.me/addemoji/", "t.me/addstickers/"):
+        if short_name.startswith(prefix):
+            short_name = short_name[len(prefix):]
+            break
+    short_name = short_name.split("?")[0].strip()
+
+    result = await client(GetStickerSetRequest(
+        stickerset=InputStickerSetShortName(short_name=short_name),
+        hash=0
+    ))
+
+    # Paket meta bilgisi
+    pack_title = getattr(result.set, "title", short_name)
+    total = getattr(result.set, "count", 0)
+
+    # Her emoji karakteri → document_id eşlemesi
+    emojis = []
+    seen = set()
+    for pack in result.packs:
+        char = pack.emoticon
+        for doc_id in pack.documents:
+            key = (char, doc_id)
+            if key not in seen:
+                seen.add(key)
+                emojis.append((char, doc_id))
+
+    return {
+        "title": pack_title,
+        "short_name": short_name,
+        "total": total,
+        "emojis": emojis,   # [(char, doc_id), ...]
+    }
+
+
+def get_emoji_pack(pack_input: str, timeout: float = 30) -> dict:
+    """Senkron wrapper — GUI'den çağrılır."""
+    return _run(_async_get_emoji_pack(pack_input), timeout=timeout)
+
+
+
+# ---------------------------------------------------------------------------
 # Mesajdan Medya İndirici (GUI için)
 # ---------------------------------------------------------------------------
 def _parse_tg_link(link: str):
@@ -302,15 +377,18 @@ def _parse_tg_link(link: str):
 
 async def _async_fetch_media(message_link: str, save_dir: str) -> dict:
     """
-    Telegram mesaj linkindeki medyayı indirir.
+    Telegram mesaj linkindeki medyayı indirir + premium emoji ID'lerini çıkarır.
 
     Returns:
         {
             "files": ["/path/to/file1.jpg", ...],  # indirilen dosya yolları
             "text": "mesaj metni",                  # mesajın yazısı (varsa)
-            "type": "photo" | "video" | "sticker" | "document" | "none"
+            "type": "photo" | "video" | "sticker" | "document" | "none",
+            "emojis": [("🔥", 12345678), ...]       # premium emoji (char, doc_id) listesi
         }
     """
+    from telethon.tl import types as tl
+
     client = get_client()
     if not client.is_connected():
         await client.connect()
@@ -330,8 +408,6 @@ async def _async_fetch_media(message_link: str, save_dir: str) -> dict:
 
     # Tekil medya
     if msg.media:
-        from telethon.tl import types as tl
-
         if hasattr(msg.media, "photo") and msg.media.photo:
             media_type = "photo"
             path = await client.download_media(msg.media, file=save_dir)
@@ -355,7 +431,6 @@ async def _async_fetch_media(message_link: str, save_dir: str) -> dict:
     # Grouped (albüm) mesajlar — aynı grouped_id'li önceki/sonraki mesajları da çek
     elif hasattr(msg, "grouped_id") and msg.grouped_id:
         media_type = "album"
-        # Etrafındaki 10 mesajı tara, aynı grouped_id olanları indir
         surrounding = await client.get_messages(entity, min_id=msg_id - 10, max_id=msg_id + 10)
         for m in surrounding:
             if getattr(m, "grouped_id", None) == msg.grouped_id and m.media:
@@ -363,17 +438,28 @@ async def _async_fetch_media(message_link: str, save_dir: str) -> dict:
                 if path:
                     downloaded.append(str(path))
 
+    # Premium emoji ID'lerini çıkar
+    emojis = []
+    raw_text = msg.message or ""
+    if msg.entities:
+        for ent in msg.entities:
+            if isinstance(ent, tl.MessageEntityCustomEmoji):
+                char = raw_text[ent.offset: ent.offset + ent.length]
+                emojis.append((char, ent.document_id))
+
     return {
         "files": downloaded,
-        "text": msg.message or "",
-        "type": media_type
+        "text": raw_text,
+        "type": media_type,
+        "emojis": emojis,          # [(emoji_char, document_id), ...]
     }
 
 
 def fetch_media_from_message(message_link: str, save_dir: str = None,
                              timeout: float = 60) -> dict:
     """
-    Telegram mesaj linkindeki fotoğraf/video/sticker/GIF'i indirir.
+    Telegram mesaj linkindeki fotoğraf/video/sticker/GIF'i indirir
+    ve premium emoji ID'lerini çıkarır.
 
     Args:
         message_link: Telegram mesaj linki (https://t.me/...)
@@ -381,7 +467,12 @@ def fetch_media_from_message(message_link: str, save_dir: str = None,
         timeout: Saniye cinsinden bekleme süresi
 
     Returns:
-        {"files": [...], "text": "...", "type": "photo"|"video"|...}
+        {
+            "files": [...],
+            "text": "...",
+            "type": "photo"|"video"|...,
+            "emojis": [("🔥", 12345), ...]
+        }
     """
     if save_dir is None:
         save_dir = os.path.join(BASE_DIR, "media")
@@ -390,23 +481,44 @@ def fetch_media_from_message(message_link: str, save_dir: str = None,
 
 
 
-# ---------------------------------------------------------------------------
-# Active chat detection
-# ---------------------------------------------------------------------------
-async def _detect_active_chat():
-    """
-    Telegram Desktop pencere basligindan aktif sohbeti bulur.
-    Format: "SohbetAdi – Telegram Desktop"  veya  "SohbetAdi (N) – Telegram Desktop"
-    """
-    client = get_client()
-    hwnd = win32gui.GetForegroundWindow()
-    title = win32gui.GetWindowText(hwnd)
 
-    # RTL/LTR isaretlerini temizle
+# ---------------------------------------------------------------------------
+# Dialog Önbelleği (her tetiklemede 500 diyalog taramayı engeller)
+# ---------------------------------------------------------------------------
+_dialog_cache: list = []          # [(name, entity), ...]
+_dialog_cache_ts: float = 0.0     # Son yenileme zamanı
+_CACHE_TTL: float = 300.0         # 5 dakika
+
+async def _refresh_dialog_cache(client):
+    """Dialog listesini yeniler ve önbelleğe alır."""
+    global _dialog_cache, _dialog_cache_ts
+    import time as _time
     strip_chars = "\u200e\u200f\u202a\u202b\u202c\u202d\u202e"
+    cache = []
+    async for dlg in client.iter_dialogs(limit=300):
+        name = (dlg.name or "").strip(strip_chars).strip()
+        if name:
+            cache.append((name, dlg.entity))
+    _dialog_cache = cache
+    _dialog_cache_ts = _time.monotonic()
+
+
+async def _detect_active_chat(window_title: str = ""):
+    """
+    Aktif Telegram sohbetini bulur.
+    window_title: Hotkey anında yakalanan pencere başlığı (gecikmeden korunmak için)
+    """
+    import time as _time
+    global _dialog_cache, _dialog_cache_ts
+
+    client = get_client()
+    strip_chars = "\u200e\u200f\u202a\u202b\u202c\u202d\u202e"
+
+    # Pencere başlığını dışarıdan al, yoksa şu anki ön pencereyi kullan
+    title = window_title or win32gui.GetWindowText(win32gui.GetForegroundWindow())
     title = title.strip(strip_chars)
 
-    # " – Telegram Desktop" veya " - Telegram" son ekini kaldir
+    # " – Telegram Desktop" veya benzeri son eki kaldır
     parts = re.split(r"\s*[–—\-]\s*Telegram", title)
     if not parts or not parts[0].strip():
         raise RuntimeError(
@@ -418,62 +530,131 @@ async def _detect_active_chat():
     # "(3)" gibi okunmamis mesaj sayacini temizle
     chat_name = re.sub(r"\s*\(\d+\)\s*$", "", chat_name).strip()
 
-    # Dialog listesinde ara
-    async for dlg in client.iter_dialogs(limit=500):
-        dlg_name = (dlg.name or "").strip(strip_chars).strip()
-        if dlg_name == chat_name:
-            return dlg.entity
+    # ── Ozel durum: Kayitli Mesajlar (Saved Messages) ──────────────────
+    # Bu chat kendi hesabimizdir, get_me() ile alinir.
+    _SAVED_NAMES = {
+        "kayitli mesajlar", "saved messages", "saved",
+        "kayıtlı mesajlar",   # Turkce
+    }
+    if chat_name.lower() in _SAVED_NAMES:
+        return await client.get_me()
+
+    # Önbellekten bak (TTL dolmadıysa)
+    now = _time.monotonic()
+    if _dialog_cache and (now - _dialog_cache_ts) < _CACHE_TTL:
+        for name, entity in _dialog_cache:
+            if name.lower() == chat_name.lower():   # Büyük/küçük harf duyarsız
+                return entity
+    
+    # Önbellek boş veya süresi dolmuş — yenile
+    await _refresh_dialog_cache(client)
+    
+    for name, entity in _dialog_cache:
+        if name.lower() == chat_name.lower():
+            return entity
+
+    # Önbellekte yoksa direkt entity dene (username/ID olabilir)
+    try:
+        return await client.get_entity(chat_name)
+    except Exception:
+        pass
 
     raise RuntimeError(
-        f"'{chat_name}' sohbeti bulunamadi. Telegram'da o sohbeti acin ve tekrar deneyin."
+        f"'{chat_name}' sohbeti bulunamadi.\n"
+        f"Telegram'da o sohbeti acin ve tekrar deneyin.\n\n"
+        f"Ipucu: Oncce Telegram penceresini tiklayin, sonra hotkey'e basin."
     )
 
 
 # ---------------------------------------------------------------------------
 # Send
 # ---------------------------------------------------------------------------
-async def _async_send(text: str, image_path: str = ""):
-    client = get_client()
-    if not client.is_connected():
-        await client.connect()
-    if not await client.is_user_authorized():
-        raise RuntimeError("Telegram hesabina giris yapilmamis. Ayarlar > Telegram API.")
+async def _async_send(text: str, image_path: str = "", window_title: str = ""):
+    from telethon.errors import FloodWaitError
+    import asyncio
 
-    entity = await _detect_active_chat()
+    client = get_client()
+
+    # Bağlantıyı garantile — kopuksa yeniden bağlan
+    for attempt in range(3):
+        try:
+            if not client.is_connected():
+                await client.connect()
+            if not await client.is_user_authorized():
+                raise RuntimeError("Telegram hesabina giris yapilmamis. Ayarlar > Telegram API.")
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise RuntimeError(f"Telegram'a baglanamadi ({e}). Ayarlar > Telegram API.")
+            await asyncio.sleep(1)
+
+    entity = await _detect_active_chat(window_title)
     plain_text, entities = _parse_markdown(text)
 
-    if image_path and os.path.exists(image_path):
-        await client.send_file(
-            entity,
-            image_path,
-            caption=plain_text,
-            formatting_entities=entities if entities else None,
-            link_preview=False,
-        )
-    else:
-        await client.send_message(
-            entity,
-            plain_text,
-            formatting_entities=entities if entities else None,
-            link_preview=False,
-        )
+    # FloodWait'e karşı retry (max 3 deneme)
+    for attempt in range(3):
+        try:
+            if image_path and os.path.exists(image_path):
+                await client.send_file(
+                    entity,
+                    image_path,
+                    caption=plain_text,
+                    formatting_entities=entities if entities else None,
+                    link_preview=False,
+                )
+            else:
+                await client.send_message(
+                    entity,
+                    plain_text,
+                    formatting_entities=entities if entities else None,
+                    link_preview=False,
+                )
+            return  # Başarılı
+        except FloodWaitError as e:
+            wait = min(e.seconds + 1, 30)  # Max 30 saniye bekle
+            await asyncio.sleep(wait)
+        except Exception as e:
+            err = str(e)
+            # Bağlantı hatası — yeniden bağlanıp dene
+            if "disconnected" in err.lower() or "connection" in err.lower():
+                try:
+                    await client.disconnect()
+                    await asyncio.sleep(1)
+                    await client.connect()
+                except Exception:
+                    pass
+                if attempt == 2:
+                    raise RuntimeError(f"Mesaj gonderilemedi (baglanti hatasi): {e}")
+            else:
+                raise  # Diğer hatalar direkt ilet
 
 
-def send(text: str, image_path: str = "", timeout: float = 30):
+def send(text: str, image_path: str = "", window_title: str = "", timeout: float = 30):
     """
     Ana send fonksiyonu — hotkey_listener'dan cagrilir.
+    window_title: Hotkey aninda yakalanan Telegram pencere basligi.
     Raises RuntimeError on failure (caller should catch).
     """
-    _run(_async_send(text, image_path), timeout=timeout)
+    _run(_async_send(text, image_path, window_title), timeout=timeout)
 
 
 async def _async_send_to(target_name: str, text: str, image_path: str = ""):
     """Belirli bir sohbet adına gönderir (broadcast için)."""
+    from telethon.errors import FloodWaitError
+    import asyncio
+
     client = get_client()
-    if not client.is_connected():
-        await client.connect()
-    if not await client.is_user_authorized():
-        raise RuntimeError("Telegram hesabına giriş yapılmamış.")
+    for attempt in range(3):
+        try:
+            if not client.is_connected():
+                await client.connect()
+            if not await client.is_user_authorized():
+                raise RuntimeError("Telegram hesabına giriş yapılmamış.")
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise RuntimeError(f"Telegram'a baglanamadi: {e}")
+            await asyncio.sleep(1)
 
     # Dialog listesinde ada göre ara
     entity = None
@@ -490,24 +671,44 @@ async def _async_send_to(target_name: str, text: str, image_path: str = ""):
             raise RuntimeError(f"'{target_name}' sohbeti bulunamadı.")
 
     plain_text, entities = _parse_markdown(text)
-    if image_path and os.path.exists(image_path):
-        await client.send_file(
-            entity, image_path,
-            caption=plain_text,
-            formatting_entities=entities if entities else None,
-            link_preview=False,
-        )
-    else:
-        await client.send_message(
-            entity, plain_text,
-            formatting_entities=entities if entities else None,
-            link_preview=False,
-        )
+
+    for attempt in range(3):
+        try:
+            if image_path and os.path.exists(image_path):
+                await client.send_file(
+                    entity, image_path,
+                    caption=plain_text,
+                    formatting_entities=entities if entities else None,
+                    link_preview=False,
+                )
+            else:
+                await client.send_message(
+                    entity, plain_text,
+                    formatting_entities=entities if entities else None,
+                    link_preview=False,
+                )
+            return
+        except FloodWaitError as e:
+            await asyncio.sleep(min(e.seconds + 1, 30))
+        except Exception as e:
+            err = str(e)
+            if "disconnected" in err.lower() or "connection" in err.lower():
+                try:
+                    await client.disconnect()
+                    await asyncio.sleep(1)
+                    await client.connect()
+                except Exception:
+                    pass
+                if attempt == 2:
+                    raise RuntimeError(f"Mesaj gonderilemedi: {e}")
+            else:
+                raise
 
 
 def send_to(target_name: str, text: str, image_path: str = "", timeout: float = 30):
     """Broadcast için belirli sohbete gönderir — hotkey_listener'dan çağrılır."""
     _run(_async_send_to(target_name, text, image_path), timeout=timeout)
+
 
 
 # Sprint 5 — Son mesajı sil
