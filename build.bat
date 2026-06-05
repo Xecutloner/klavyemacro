@@ -6,6 +6,7 @@ pyinstaller ^
     --onefile ^
     --windowed ^
     --name "KlavyeMacro" ^
+    --runtime-tmpdir . ^
     --add-data "macros.json;." ^
     --add-data "keyboard_guard.py;." ^
     --add-data "webhook_server.py;." ^

@@ -55,17 +55,16 @@ rel, s = api("POST", f"https://api.github.com/repos/{USER}/{REPO}/releases", {
     "name": f"KlavyeMacro {TAG}",
     "body": (
         f"## KlavyeMacro {TAG}\n\n"
-        "### Yenilikler / Duzeltmeler\n\n"
-        "- **KRITIK DUZELTME:** Makro kullanimi sirasinda klavye davranisinin bozulmasi sorunu giderildi\n"
-        "  - CapsLock'un ters calisma sorunu artik olmayacak\n"
-        "  - Shift/Ctrl/Alt tuslarinin takili kalma sorunu giderildi\n"
-        "- Yeni `keyboard_guard.py` modulu eklendi: 5 katmanli koruma\n"
-        "  - Normal kapanma, Ctrl+C, taskkill, crash ve konsol kapatma senaryolarinda klavye temiz birakilir\n"
-        "  - Program kapandiginda CapsLock basta ne durumdaysa o duruma otomatik donduruluyor\n\n"
+        "### Duzeltmeler\n\n"
+        "- **KRITIK PATCH:** Guncelleyici ile v1.1.0 yuklenince 'Failed to load Python DLL' hatasi veren sorun giderildi\n"
+        "  - PyInstaller runtime dosyalari artik Windows Temp klasoru yerine EXE'nin yanina cikariliyor\n"
+        "  - Antivirus ve Windows Temp temizleyicilerin python311.dll'i silmesi artik soruna yol acmiyor\n"
+        "- v1.1.0'daki klavye koruma ozellikleri (keyboard_guard) korundu\n\n"
         "### Nasil Guncellenir\n\n"
-        "Asagidaki `KlavyeMacro.exe` dosyasini indirip eskisinin uzerine kopyalayin.  \n"
-        "Makrolariniz ve ayarlariniz korunur.\n\n"
-        "Veya uygulama icerisinden: **Ayarlar → Guncelleme Kontrol Et**"
+        "**v1.0.0 kullanicilari:** Uygulama icerisinden Ayarlar -> Guncelleme Kontrol Et -> Indir ve Yukle\n\n"
+        "**v1.1.0 kullanicilari (DLL hatasi alanlar):** "
+        "Asagidaki EXE'yi indirip eskisinin uzerine kopyalayin - bu sefer hata olmayacak.\n\n"
+        "Makrolariniz ve ayarlariniz korunur."
     ),
     "draft": False
 })
