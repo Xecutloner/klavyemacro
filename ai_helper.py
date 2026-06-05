@@ -36,7 +36,7 @@ GEMINI_ENDPOINT = (
 # Kendi GitHub hesabına göre değiştir (kullanıcı/repo)
 GITHUB_REPO = "Xecutloner/klavyemacro"
 # EXE asset adı (GitHub Release'deki dosya adı)
-ASSET_NAME  = "KlavyeMacro.exe"
+ASSET_NAME  = "KlavyeMacro.zip"
 
 
 # ─── API Key ─────────────────────────────────────────────────────────────────
@@ -208,7 +208,7 @@ def download_update(download_url: str,
         )
 
         # Geçici dosya oluştur
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".exe", prefix="KlavyeMacro_update_")
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix="KlavyeMacro_update_")
         os.close(tmp_fd)
 
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -245,27 +245,63 @@ def get_current_exe() -> str:
     return ""  # Kaynak kodu modunda
 
 
-def create_updater_script(new_exe_path: str, current_exe_path: str = None) -> str:
+def create_updater_script(extracted_dir: str, current_exe_path: str) -> str:
     """
-    Uygulama kapanınca yeni EXE'yi yerine koyan bir .bat script oluşturur.
-
-    Çalışma mantığı:
-      1. Uygulama bu bat'ı çalıştırıp kapanır
-      2. Bat 3 saniye bekler (process'in tamamen kapanması için)
-      3. Yeni EXE'yi eski EXE'nin yerine kopyalar
-      4. Yeni EXE'yi başlatır
-      5. Bat kendini siler
-
-    Args:
-        new_exe_path: İndirilen yeni EXE'nin geçici yolu
-        current_exe_path: Mevcut EXE yolu (None = otomatik tespit)
-
-    Returns:
-        Oluşturulan bat dosyasının yolu
-
-    Raises:
-        RuntimeError: EXE yolu bulunamazsa
+    ZIP'ten çıkartılmış dosyaları eski kurulumun üzerine kopyalayan bat oluşturur.
+    macros.json ve ai_config.json korunur (üzerine yazılmaz).
     """
+    exe_dir = os.path.dirname(current_exe_path)
+    bat_path = os.path.join(exe_dir, "_klavye_updater.bat")
+
+    bat_content = f"""@echo off
+echo KlavyeMacro Guncelleyici baslatildi...
+timeout /t 4 /nobreak >nul
+
+:retry
+tasklist /FI "IMAGENAME eq KlavyeMacro.exe" 2>nul | find /I "KlavyeMacro.exe" >nul
+if not errorlevel 1 (
+    echo Uygulama hala acik, 2 saniye bekleniyor...
+    timeout /t 2 /nobreak >nul
+    goto retry
+)
+
+echo Dosyalar guncelleniyor...
+
+REM Kullanici verilerini koru (macros.json, ai_config.json ustune yazma)
+echo macros.json> "%TEMP%\_kmexcl.txt"
+echo ai_config.json>> "%TEMP%\_kmexcl.txt"
+
+xcopy /s /y /e /exclude:"%TEMP%\_kmexcl.txt" "{extracted_dir}\\*" "{exe_dir}\\"
+del "%TEMP%\_kmexcl.txt" 2>nul
+
+if errorlevel 1 (
+    echo HATA: Dosya kopyalama basarisiz!
+    pause
+    exit /b 1
+)
+
+REM Gecici klasoru temizle
+rd /s /q "{extracted_dir}" 2>nul
+
+echo Baslatiliyor: {current_exe_path}
+start "" /D "{exe_dir}" "{current_exe_path}"
+echo Guncelleme tamamlandi!
+timeout /t 1 /nobreak >nul
+del "%~f0"
+"""
+
+    with open(bat_path, "w", encoding="utf-8") as f:
+        f.write(bat_content)
+    return bat_path
+
+
+def launch_updater_and_quit(new_zip_path: str, current_exe_path: str = None):
+    """
+    ZIP'i açar, bat script'i oluşturur ve uygulamayı kapatır.
+    Bu fonksiyon RETURN ETMEZ — sys.exit() çağırır.
+    """
+    import subprocess, zipfile, shutil
+
     if current_exe_path is None:
         current_exe_path = get_current_exe()
 
@@ -276,73 +312,22 @@ def create_updater_script(new_exe_path: str, current_exe_path: str = None) -> st
         )
 
     exe_dir = os.path.dirname(current_exe_path)
-    bat_path = os.path.join(exe_dir, "_klavye_updater.bat")
 
-    # Windows path'lerinde çift tırnak kullan
-    bat_content = f"""@echo off
-echo KlavyeMacro Guncelleyici baslatildi...
-echo Uygulama kapanmayi bekliyor...
-timeout /t 4 /nobreak >nul
+    # ZIP'i şimdi aç (uygulama hâlâ çalışırken)
+    extract_dir = os.path.join(exe_dir, "_update_extracted")
+    if os.path.exists(extract_dir):
+        shutil.rmtree(extract_dir, ignore_errors=True)
 
-:retry
-tasklist /FI "IMAGENAME eq KlavyeMacro.exe" 2>nul | find /I "KlavyeMacro.exe" >nul
-if not errorlevel 1 (
-    echo Uygulama hala acik, 2 saniye daha bekleniyor...
-    timeout /t 2 /nobreak >nul
-    goto retry
-)
+    with zipfile.ZipFile(new_zip_path, "r") as z:
+        z.extractall(extract_dir)
 
-echo Yeni surum kopyalaniyor...
-move /Y "{new_exe_path}" "{current_exe_path}"
-if errorlevel 1 (
-    echo HATA: Dosya kopyalanamadi! Yetki sorunu olabilir.
-    echo Yeni EXE yolu: {new_exe_path}
-    pause
-    exit /b 1
-)
+    # Bat script oluştur ve başlat
+    bat_path = create_updater_script(extract_dir, current_exe_path)
 
-REM EXE dizinine gec: --runtime-tmpdir . EXE'nin yanina cikarir
-cd /d "{exe_dir}"
-
-REM Eski _MEI temp dosyalarini temizle (DLL yuklenme hatasi onlemi)
-for /d %%D in ("{exe_dir}\\_MEI*") do (
-    echo Eski temp klasoru siliniyor: %%D
-    rd /s /q "%%D" 2>nul
-)
-
-REM Antivirusin taramasini bitirmesi icin bekle
-timeout /t 3 /nobreak >nul
-
-echo Baslatiliyor: {current_exe_path}
-start "" /D "{exe_dir}" "{current_exe_path}"
-echo Guncelleme tamamlandi!
-timeout /t 1 /nobreak >nul
-
-del "%~f0"
-"""
-
-    with open(bat_path, "w", encoding="utf-8") as f:
-        f.write(bat_content)
-
-    return bat_path
-
-
-def launch_updater_and_quit(new_exe_path: str, current_exe_path: str = None):
-    """
-    Updater bat'ı arka planda başlatır ve uygulamayı kapatır.
-
-    Bu fonksiyon RETURN ETMEZ — sys.exit() çağırır.
-    """
-    import subprocess
-
-    bat_path = create_updater_script(new_exe_path, current_exe_path)
-
-    # Bat'ı yeni bir pencerede (görünmez) başlat
     subprocess.Popen(
         ["cmd.exe", "/c", bat_path],
         creationflags=subprocess.CREATE_NO_WINDOW,
         close_fds=True
     )
 
-    # Uygulamayı kapat
     sys.exit(0)

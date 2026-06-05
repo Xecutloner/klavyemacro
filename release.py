@@ -16,7 +16,7 @@ TAG     = f"v{VERSION}"
 USER    = "Xecutloner"
 REPO    = "klavyemacro"
 BASE    = os.path.dirname(os.path.abspath(__file__))
-EXE     = os.path.join(BASE, "dist", "KlavyeMacro.exe")
+EXE     = os.path.join(BASE, "dist", "KlavyeMacro.zip")
 
 H = {"Authorization": f"token {TOKEN}", "Accept": "application/vnd.github.v3+json",
      "Content-Type": "application/json", "User-Agent": "KlavyeMacro-Releaser/1.0"}
@@ -83,7 +83,7 @@ with open(EXE, "rb") as f:
     exe_data = f.read()
 uh = {"Authorization": f"token {TOKEN}", "Content-Type": "application/octet-stream",
       "User-Agent": "KlavyeMacro-Releaser/1.0"}
-req = urllib.request.Request(f"{upload_url}?name=KlavyeMacro.exe",
+req = urllib.request.Request(f"{upload_url}?name=KlavyeMacro.zip",
                              data=exe_data, headers=uh, method="POST")
 with urllib.request.urlopen(req, timeout=300) as r:
     ud = json.loads(r.read())

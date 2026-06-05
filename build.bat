@@ -1,12 +1,11 @@
 @echo off
-echo KlavyeMacro - EXE Olusturuluyor...
+echo KlavyeMacro - EXE Olusturuluyor (--onedir)...
 echo.
 
 pyinstaller ^
-    --onefile ^
+    --onedir ^
     --windowed ^
     --name "KlavyeMacro" ^
-    --runtime-tmpdir . ^
     --add-data "macros.json;." ^
     --add-data "keyboard_guard.py;." ^
     --add-data "webhook_server.py;." ^
@@ -25,12 +24,21 @@ pyinstaller ^
     main.py
 
 echo.
-if exist "dist\KlavyeMacro.exe" (
-    echo [OK] EXE basariyla olusturuldu: dist\KlavyeMacro.exe
-    copy "macros.json" "dist\macros.json" 2>nul
-    if exist "profiles" xcopy /E /I "profiles" "dist\profiles" 2>nul
-    if exist "ai_config.json" copy "ai_config.json" "dist\ai_config.json" 2>nul
-    echo [OK] Dosyalar dist klasorune kopyalandi.
+if exist "dist\KlavyeMacro\KlavyeMacro.exe" (
+    echo [OK] EXE basariyla olusturuldu: dist\KlavyeMacro\KlavyeMacro.exe
+
+    REM Profil klasorunu kopyala
+    if exist "profiles" xcopy /E /I /Y "profiles" "dist\KlavyeMacro\profiles" 2>nul
+
+    REM ZIP olustur (kullanici macros.json ve ai_config.json ZIP'e dahil edilmez)
+    if exist "dist\KlavyeMacro.zip" del "dist\KlavyeMacro.zip"
+    powershell -Command "Compress-Archive -Path 'dist\KlavyeMacro\*' -DestinationPath 'dist\KlavyeMacro.zip' -Force"
+
+    if exist "dist\KlavyeMacro.zip" (
+        echo [OK] ZIP olusturuldu: dist\KlavyeMacro.zip
+    ) else (
+        echo [HATA] ZIP olusturulamadi!
+    )
 ) else (
     echo [HATA] EXE olusturulamadi!
 )

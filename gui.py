@@ -2627,7 +2627,7 @@ class UpdateCheckDialog(tk.Toplevel):
       4. Kurulum  — Bat script çalıştırılır, uygulama yeniden başlar
     """
 
-    VERSION = "1.1.2"
+    VERSION = "1.1.3"
 
     def __init__(self, parent):
         super().__init__(parent)
