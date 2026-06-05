@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# PyInstaller
+build/
+dist/
+*.spec
+*.pkg
+
+# Telegram session dosyaları (kişisel bilgi içerir!)
+tg_session*
+*.session
+
+# Kimlik bilgileri (ASLA paylaşma!)
+tg_creds.json
+ai_config.json
+
+# Makrolar (kişisel)
+macros.json
+profiles/
+
+# Geçici dosyalar
+media/
+*.log
+_klavye_updater.bat
+KlavyeMacro_update_*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Windows
+Thumbs.db
+desktop.ini
+
+github_setup.py
