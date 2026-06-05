@@ -7,6 +7,9 @@ pyinstaller ^
     --windowed ^
     --name "KlavyeMacro" ^
     --add-data "macros.json;." ^
+    --add-data "keyboard_guard.py;." ^
+    --add-data "webhook_server.py;." ^
+    --add-data "ai_helper.py;." ^
     --hidden-import "pystray._win32" ^
     --hidden-import "PIL._tkinter_finder" ^
     --hidden-import "win32gui" ^
@@ -18,8 +21,6 @@ pyinstaller ^
     --hidden-import "cryptg" ^
     --hidden-import "urllib.request" ^
     --hidden-import "http.server" ^
-    --add-data "webhook_server.py;." ^
-    --add-data "ai_helper.py;." ^
     main.py
 
 echo.
