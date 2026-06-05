@@ -5,6 +5,10 @@ __pycache__/
 *.pyd
 .Python
 
+# Kisisel makro dosyalari
+*.kmd
+*.pkl
+
 # PyInstaller
 build/
 dist/
