@@ -56,14 +56,15 @@ rel, s = api("POST", f"https://api.github.com/repos/{USER}/{REPO}/releases", {
     "body": (
         f"## KlavyeMacro {TAG}\n\n"
         "### Duzeltmeler\n\n"
-        "- **KRITIK PATCH:** Guncelleyici ile v1.1.0 yuklenince 'Failed to load Python DLL' hatasi veren sorun giderildi\n"
-        "  - PyInstaller runtime dosyalari artik Windows Temp klasoru yerine EXE'nin yanina cikariliyor\n"
-        "  - Antivirus ve Windows Temp temizleyicilerin python311.dll'i silmesi artik soruna yol acmiyor\n"
-        "- v1.1.0'daki klavye koruma ozellikleri (keyboard_guard) korundu\n\n"
+        "- **KRITIK PATCH v2:** 'Failed to load Python DLL' hatasi kesin olarak giderildi\n"
+        "  - Guncelleyici bat script artik EXE'yi kendi dizininden baslaatiyor (`cd /d exe_dir`)\n"
+        "  - `--runtime-tmpdir .` ile DLL dosyalari EXE'nin yanina cikariliyor (Temp klasoru kullanilmiyor)\n"
+        "  - Guncelleme oncesi eski `_MEI*` temp klasorleri otomatik temizleniyor\n"
+        "  - Antivirus taramasi icin ekstra bekleme suresi eklendi\n\n"
         "### Nasil Guncellenir\n\n"
-        "**v1.0.0 kullanicilari:** Uygulama icerisinden Ayarlar -> Guncelleme Kontrol Et -> Indir ve Yukle\n\n"
-        "**v1.1.0 kullanicilari (DLL hatasi alanlar):** "
-        "Asagidaki EXE'yi indirip eskisinin uzerine kopyalayin - bu sefer hata olmayacak.\n\n"
+        "**v1.0.0 / v1.1.0 / v1.1.1 kullanicilari:**\n"
+        "Uygulama icerisinden Ayarlar -> Guncelleme Kontrol Et -> Indir ve Yukle\n\n"
+        "Ya da asagidaki EXE'yi indirip eskisinin uzerine kopyalayin.\n"
         "Makrolariniz ve ayarlariniz korunur."
     ),
     "draft": False

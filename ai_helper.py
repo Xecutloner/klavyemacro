@@ -275,15 +275,14 @@ def create_updater_script(new_exe_path: str, current_exe_path: str = None) -> st
             "Python scripti olarak çalışıyorsun — manuel güncelleme yap."
         )
 
-    # Bat dosyasını EXE'nin yanına yaz
-    bat_dir = os.path.dirname(current_exe_path)
-    bat_path = os.path.join(bat_dir, "_klavye_updater.bat")
+    exe_dir = os.path.dirname(current_exe_path)
+    bat_path = os.path.join(exe_dir, "_klavye_updater.bat")
 
     # Windows path'lerinde çift tırnak kullan
     bat_content = f"""@echo off
 echo KlavyeMacro Guncelleyici baslatildi...
 echo Uygulama kapanmayi bekliyor...
-timeout /t 3 /nobreak >nul
+timeout /t 4 /nobreak >nul
 
 :retry
 tasklist /FI "IMAGENAME eq KlavyeMacro.exe" 2>nul | find /I "KlavyeMacro.exe" >nul
@@ -302,8 +301,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM EXE dizinine gec: --runtime-tmpdir . EXE'nin yanina cikarir
+cd /d "{exe_dir}"
+
+REM Eski _MEI temp dosyalarini temizle (DLL yuklenme hatasi onlemi)
+for /d %%D in ("{exe_dir}\\_MEI*") do (
+    echo Eski temp klasoru siliniyor: %%D
+    rd /s /q "%%D" 2>nul
+)
+
+REM Antivirusin taramasini bitirmesi icin bekle
+timeout /t 3 /nobreak >nul
+
 echo Baslatiliyor: {current_exe_path}
-start "" "{current_exe_path}"
+start "" /D "{exe_dir}" "{current_exe_path}"
 echo Guncelleme tamamlandi!
 timeout /t 1 /nobreak >nul
 
