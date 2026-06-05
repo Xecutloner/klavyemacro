@@ -2,6 +2,7 @@
 hotkey_listener.py - Güvenilir makro kısayol dinleyici.
 keyboard kütüphanesi kullanır (geniş tuş desteği).
 Proaktif watchdog ile hook ölüm sorunu engellenir.
+keyboard_guard ile klavye davranışı her koşulda korunur.
 """
 
 import os
@@ -19,6 +20,7 @@ import win32gui
 import win32process
 
 from macro_manager import MacroManager, Macro, resolve_variables
+import keyboard_guard as _kg
 
 try:
     import telethon_sender as tg_api
@@ -118,12 +120,21 @@ def paste_text_safe(text: str, restore_clipboard: bool = True,
 
 
 def _release_modifiers():
-    for key in ['ctrl', 'alt', 'shift']:
-        try:
-            pyautogui.keyUp(key)
-        except Exception:
-            pass
-    time.sleep(0.1)
+    """
+    Tüm modifier tuşları (Shift, Ctrl, Alt, Win sol+sağ) zorla bırakır.
+    keyboard_guard üzerinden Windows VK düzeyinde çalışır — pyautogui'den
+    daha güvenilirdir çünkü doğrudan keybd_event kullanır.
+    """
+    try:
+        _kg.release_all_modifiers()
+    except Exception:
+        # Fallback: pyautogui yöntemi
+        for key in ['shift', 'ctrl', 'alt']:
+            try:
+                pyautogui.keyUp(key)
+            except Exception:
+                pass
+    time.sleep(0.08)
 
 
 def _bring_window_to_front(hwnd: int):
@@ -164,9 +175,11 @@ class HotkeyListener:
     _WATCHDOG_INTERVAL = 20   # saniye
 
     def __init__(self, macro_manager: MacroManager,
-                 on_macro_triggered: Optional[Callable] = None):
+                 on_macro_triggered: Optional[Callable] = None,
+                 on_error: Optional[Callable] = None):
         self.macro_manager = macro_manager
         self.on_macro_triggered = on_macro_triggered
+        self.on_error = on_error  # on_error(title: str, message: str)
 
         self._running = False
         self._registered: Dict[str, str] = {}    # hotkey → macro_id
@@ -206,6 +219,11 @@ class HotkeyListener:
         self._repeat_events.clear()
         self._do_unregister_all()
         self._unregister_expansion()
+        # ── Klavye temizliği: modifier + hook + CapsLock ────────────
+        try:
+            _kg.full_keyboard_reset(restore_capslock=True)
+        except Exception:
+            pass
         print("[HotkeyListener] Durduruldu.")
 
     def refresh(self):
@@ -222,6 +240,11 @@ class HotkeyListener:
         with self._lock:
             try:
                 keyboard.unhook_all()
+            except Exception:
+                pass
+            # Hook sonrası modifier tuşları zorla bırak
+            try:
+                _kg.release_all_modifiers()
             except Exception:
                 pass
             self._registered.clear()
@@ -498,17 +521,28 @@ class HotkeyListener:
                 break  # Başarılı, retry döngüsünden çık
 
             except Exception as e:
-                print(f"[HotkeyListener] Makro hatası ({macro.name}) "
-                      f"[deneme {attempt+1}/{max_retries+1}]: {e}")
+                err_msg = str(e)
+                print(f"[HotkeyListener] Makro hatasi ({macro.name}) "
+                      f"[deneme {attempt+1}/{max_retries+1}]: {err_msg}")
                 if attempt < max_retries:
-                    time.sleep(1.5 * (attempt + 1))  # Artan bekleme
+                    time.sleep(1.5 * (attempt + 1))
                 else:
-                    print(f"[HotkeyListener] {macro.name} tüm denemeler başarısız.")
+                    print(f"[HotkeyListener] {macro.name} tum denemeler basarisiz.")
+                    if self.on_error:
+                        self.on_error(
+                            f"Makro Hatasi: {macro.name}",
+                            err_msg
+                        )
         self._macro_executing[macro_id] = False
 
     def _do_execute(self, macro: Macro):
-        """Makroyu tek seferlik çalıştırır. Hata raise eder."""
+        """
+        Makroyu tek seferlik çalıştırır. Hata raise eder.
+        KeyboardSafeSection ile makro öncesi/sonrası CapsLock korunur.
+        """
         _release_modifiers()
+        # CapsLock durumunu makro öncesi kaydet, sonra geri al
+        _caps_before = _kg.get_capslock_state()
 
         restore = self.macro_manager.settings.get("restore_clipboard", True)
         has_images = bool(macro.image_paths)
@@ -560,12 +594,15 @@ class HotkeyListener:
             if not _TELETHON_OK:
                 raise RuntimeError("Telethon yüklü değil!")
 
+            # Pencere başlığını şu anda yakala (async gecikmesinden önce!)
+            import win32gui as _wg
+            _tg_title = _wg.GetWindowText(_wg.GetForegroundWindow())
+
             # Broadcast: birden fazla sohbete gönder
             targets = macro.broadcast_targets if macro.broadcast_targets else [None]
             for target in targets:
                 try:
                     if target:
-                        # Belirli sohbete gönder
                         tg_api.send_to(
                             target_name=target,
                             text=resolved_text,
@@ -574,12 +611,13 @@ class HotkeyListener:
                     else:
                         tg_api.send(
                             text=resolved_text,
-                            image_path=macro.image_paths[0] if has_images else ""
+                            image_path=macro.image_paths[0] if has_images else "",
+                            window_title=_tg_title,
                         )
                     if len(targets) > 1:
-                        time.sleep(1.0)  # Sohbetler arası bekleme
+                        time.sleep(1.0)
                 except Exception as e:
-                    print(f"[Broadcast] '{target}' hedefine gönderilemedi: {e}")
+                    print(f"[API] '{target or _tg_title}' hedefine gönderilemedi: {e}")
                     raise
 
         # ── Sadece metin ──────────────────────────────────────────────────
@@ -629,3 +667,11 @@ class HotkeyListener:
         if macro.delay_after > 0:
             time.sleep(macro.delay_after)
 
+        # ── Makro sonrası CapsLock kontrolü ─────────────────────────────
+        # Makro çalışırken CapsLock değiştiyse (beklenmedik durum) geri al
+        try:
+            if _kg.get_capslock_state() != _caps_before:
+                _kg.set_capslock(_caps_before)
+                print(f"[KeyboardGuard] CapsLock makro sonrasi duzeltildi -> {'ACIK' if _caps_before else 'KAPALI'}")
+        except Exception:
+            pass

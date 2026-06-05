@@ -22,6 +22,7 @@ from hotkey_listener import HotkeyListener
 from gui import MacroGUI, HotkeyHelpPopup, UpdateCheckDialog
 from tray import SystemTray
 from webhook_server import WebhookServer
+import keyboard_guard as _kg
 
 
 def is_admin():
@@ -42,7 +43,12 @@ def request_admin():
 
 
 def main():
-    # ─── Bileşenleri Oluştur ──────────────────────────────────
+    # ─── Klavye Korumasını İLK ŞİMDİ Aktif Et ─────────────────────
+    # atexit, SIGINT, SIGTERM, crash hook, konsol X butonu
+    # tüm senaryolarda klavye temiz bırakılır
+    _kg.register_guards()
+
+    # ─── Bileşenleri Oluştur ─────────────────────────────
     manager = MacroManager()
 
     listener = HotkeyListener(manager)
@@ -87,11 +93,30 @@ def main():
 
     listener.on_macro_triggered = on_macro_triggered
 
+    # Makro hatası → kullanıcıya popup göster
+    def on_macro_error(title: str, message: str):
+        import threading, ctypes
+        def _show():
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                message,
+                title,
+                0x10 | 0x1000  # MB_ICONERROR | MB_SYSTEMMODAL
+            )
+        threading.Thread(target=_show, daemon=True).start()
+
+    listener.on_error = on_macro_error
+
     # Pencere kapatılınca tepsiye küçülme
     gui.on_close_to_tray = lambda: None  # Tray zaten çalışıyor
 
     def quit_app():
-        listener.stop()
+        listener.stop()  # stop() içinde full_keyboard_reset çağrılıyor
+        # Ek güvence: tüm hookları ve modifier'ları temizle
+        try:
+            _kg.full_keyboard_reset(restore_capslock=True)
+        except Exception:
+            pass
         tray.stop()
         try:
             gui.root.after(0, gui.root.destroy)
@@ -138,8 +163,13 @@ def main():
     # Tkinter main loop (ana thread'de çalışmalı)
     gui.run()
 
-    # Çıkışta temizlik
-    listener.stop()
+    # Çıkışta temizlik (normal kapanma)
+    listener.stop()  # stop() içinde full_keyboard_reset çağrılıyor
+    # Son güvence turu
+    try:
+        _kg.full_keyboard_reset(restore_capslock=True)
+    except Exception:
+        pass
     webhook.stop()
     tray.stop()
 
